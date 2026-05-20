@@ -4,18 +4,44 @@ const cors = require("cors");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const port = process.env.PORT || 8082;
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const crypto = require("crypto");
+const admin = require("firebase-admin");
+const serviceAccount = require("./zapshift-firebase-admin.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+// Tracking ID
 function generateTrackingId() {
   const prefix = "PRCL";
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const random = crypto.randomBytes(3).toString("hex").toUpperCase();
   return `${prefix}-${date}-${random}`;
 }
-const stripe = require("stripe")(process.env.STRIPE_SECRET);
+
 // middleware
 app.use(express.json());
 app.use(cors());
 
+const verifyToken = async (req, res, next) => {
+  console.log("HEADERS: ", req.headers.authorization);
+  const token = req.headers.authorization;
+  if (!token) {
+    return res.status(401).send({ message: "Unauthorized access!" });
+  }
+  try {
+    const idToken = token.split(" ")[1]
+    const decoded = await admin.auth().verifyIdToken(idToken)
+    console.log(decoded)
+    req.decoded_email = decoded.email
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "Unauthorized access!" });
+  }
+  
+};
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.1rbhjut.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -98,15 +124,18 @@ async function run() {
     app.patch("/payment-success", async (req, res) => {
       const sessionId = req.query.session_id;
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      const transactionId=session.payment_intent;
-      const query = {transactionId:transactionId}
-      const paymentExist=  await paymentCollection.findOne(query);
-      if(paymentExist){
-        return res.send({message:"Payment already exist",transactionId,trackingId:paymentExist.trackingId})
+      const transactionId = session.payment_intent;
+      const query = { transactionId: transactionId };
+      const paymentExist = await paymentCollection.findOne(query);
+      if (paymentExist) {
+        return res.send({
+          message: "Payment already exist",
+          transactionId,
+          trackingId: paymentExist.trackingId,
+        });
       }
       const trackingId = generateTrackingId();
       console.log("Session retrive: ", session);
-
 
       if (session.payment_status === "paid") {
         const id = session.metadata.parcelId;
@@ -145,37 +174,53 @@ async function run() {
         }
       }
     });
-    // old payment api
-    app.post("/create-checkout-session", async (req, res) => {
-      const paymentInfo = req.body;
-      const amount = parseInt(paymentInfo.cost) * 100;
-      const session = await stripe.checkout.sessions.create({
-        // ui_mode: "elements",
-        line_items: [
-          {
-            price_data: {
-              currency: "USD",
-              unit_amount: amount,
-              product_data: {
-                name: paymentInfo.parcelName,
-              },
-            },
-            quantity: 1,
-          },
-        ],
-        customer_email: paymentInfo.senderEmail,
-        metadata: {
-          parcelId: paymentInfo.parcelId,
-        },
-        mode: "payment",
-        // return_url: `${process.env.SITE_DOMAIN}/complete?session_id={CHECKOUT_SESSION_ID}`,
-        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
-        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
-        // cancel_url: `${process.env.SITE_DOMAIN}/complete?session_id={CHECKOUT_SESSION_ID}`,
-      });
-      console.log(session);
-      res.send({ url: session.url });
+
+    app.get("/payments", verifyToken, async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+
+      if (email) {
+        query.customerEmail = email;
+        if(email !== req.decoded_email){
+          return res.status(401).send({ message: "Forbidden access!" });
+        }
+      }
+      const cursor = paymentCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
     });
+
+    // old payment api
+    // app.post("/create-checkout-session", async (req, res) => {
+    //   const paymentInfo = req.body;
+    //   const amount = parseInt(paymentInfo.cost) * 100;
+    //   const session = await stripe.checkout.sessions.create({
+    //     // ui_mode: "elements",
+    //     line_items: [
+    //       {
+    //         price_data: {
+    //           currency: "USD",
+    //           unit_amount: amount,
+    //           product_data: {
+    //             name: paymentInfo.parcelName,
+    //           },
+    //         },
+    //         quantity: 1,
+    //       },
+    //     ],
+    //     customer_email: paymentInfo.senderEmail,
+    //     metadata: {
+    //       parcelId: paymentInfo.parcelId,
+    //     },
+    //     mode: "payment",
+    //     // return_url: `${process.env.SITE_DOMAIN}/complete?session_id={CHECKOUT_SESSION_ID}`,
+    //     success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
+    //     cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+    //     // cancel_url: `${process.env.SITE_DOMAIN}/complete?session_id={CHECKOUT_SESSION_ID}`,
+    //   });
+    //   console.log(session);
+    //   res.send({ url: session.url });
+    // });
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
