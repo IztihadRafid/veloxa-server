@@ -57,6 +57,26 @@ async function run() {
     const db = client.db("ZapShift_db");
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
+    const userCollection = db.collection("users");
+
+
+    // user related API
+    app.post("/users",async(req,res)=>{
+      const user = req.body;
+      user.role="user"
+      user.createdAt = new Date();
+      const email = user.email;
+      const userExists = await userCollection.findOne({  email });
+      if(userExists){
+        return res.send({message:"User already exists"})
+      }
+      const result = await userCollection.insertOne(user);
+      res.send(result)
+    })
+
+
+
+
     // parcel API
     app.get("/parcels", async (req, res) => {
       const query = {};
@@ -185,7 +205,7 @@ async function run() {
           return res.status(401).send({ message: "Forbidden access!" });
         }
       }
-      const cursor = paymentCollection.find(query);
+      const cursor = paymentCollection.find(query).sort({paidAt:-1});
       const result = await cursor.toArray();
       res.send(result);
     });
