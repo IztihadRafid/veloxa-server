@@ -25,22 +25,6 @@ function generateTrackingId() {
 app.use(express.json());
 app.use(cors());
 
-const verifyToken = async (req, res, next) => {
-  console.log("HEADERS: ", req.headers.authorization);
-  const token = req.headers.authorization;
-  if (!token) {
-    return res.status(401).send({ message: "Unauthorized access!" });
-  }
-  try {
-    const idToken = token.split(" ")[1];
-    const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log(decoded);
-    req.decoded_email = decoded.email;
-    next();
-  } catch (error) {
-    return res.status(401).send({ message: "Unauthorized access!" });
-  }
-};
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.1rbhjut.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -58,6 +42,34 @@ async function run() {
     const paymentCollection = db.collection("payments");
     const userCollection = db.collection("users");
     const ridersCollection = db.collection("riders");
+
+    // Verify Token Function
+    const verifyToken = async (req, res, next) => {
+      console.log("HEADERS: ", req.headers.authorization);
+      const token = req.headers.authorization;
+      if (!token) {
+        return res.status(401).send({ message: "Unauthorized access!" });
+      }
+      try {
+        const idToken = token.split(" ")[1];
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        console.log(decoded);
+        req.decoded_email = decoded.email;
+        next();
+      } catch (error) {
+        return res.status(401).send({ message: "Unauthorized access!" });
+      }
+    };
+    // Verify Admin before allwoing admin activity
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden Access" });
+      }
+      next();
+    };
 
     // Rider Related API
     app.post("/riders", async (req, res) => {
@@ -79,7 +91,7 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/riders/:id", verifyToken, async (req, res) => {
+    app.patch("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
       const status = req.body.status;
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -120,16 +132,41 @@ async function run() {
     });
 
     // Getting all users
-    app.get("/users",verifyToken ,async (req, res) => {
-      const cursor = userCollection.find();
+    app.get("/users", verifyToken, async (req, res) => {
+      const searchText = req.query.searchText?.trim();
+      const query = {};
+
+      if (searchText) {
+        const parts = searchText.split(" ").filter(Boolean);
+
+        if (parts.length >= 2) {
+          // Search firstName and lastName
+          query.$and = [
+            { firstName: { $regex: parts[0], $options: "i" } },
+            { lastName: { $regex: parts.slice(1).join(" "), $options: "i" } },
+          ];
+        } else {
+          // search either firstName or lastName
+          query.$or = [
+            { firstName: { $regex: searchText, $options: "i" } },
+            { lastName: { $regex: searchText, $options: "i" } },
+            { email: { $regex: searchText, $options: "i" } },
+          ];
+        }
+      }
+
+      const cursor = userCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(10);
       const result = await cursor.toArray();
       res.send(result);
     });
 
     // update role to make admin
-    app.patch("/users/:id", verifyToken, async (req, res) => {
+    app.patch("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
-      const roleInfo= req.body;
+      const roleInfo = req.body;
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: {
@@ -138,6 +175,13 @@ async function run() {
       };
       const result = await userCollection.updateOne(query, updateDoc);
       res.send(result);
+    });
+
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
     });
 
     // parcel API
