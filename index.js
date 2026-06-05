@@ -71,11 +71,14 @@ async function run() {
       next();
     };
 
+    // ------------------------------------------------
     // Rider Related API
-    app.post("/riders", async (req, res) => {
+    // ------------------------------------------------
+    app.post("/riders", verifyToken, async (req, res) => {
       const rider = req.body;
       rider.createdAt = new Date();
       rider.status = "pending";
+      rider.email = req.decoded_email;
       const result = await ridersCollection.insertOne(rider);
       res.send(result);
     });
@@ -93,17 +96,9 @@ async function run() {
       if (workStatus) {
         query.workStatus = workStatus;
       }
-      console.log("Query being run:", query);
-      const cursor = ridersCollection.find(query);
-
+      const cursor = ridersCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
-      console.log("Riders found:", result.length);
       res.send(result);
-    });
-    app.get("/riders-debug", async (req, res) => {
-      const allRiders = await ridersCollection.find({}).toArray();
-      console.log("All riders:", JSON.stringify(allRiders, null, 2));
-      res.send(allRiders);
     });
     app.patch("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
       const status = req.body.status;
@@ -132,7 +127,9 @@ async function run() {
       res.send(result);
     });
 
-    // user related API
+    // ------------------------------------------------
+    //User Related API
+    // ------------------------------------------------
     app.post("/users", async (req, res) => {
       const user = req.body;
       user.role = "user";
@@ -199,7 +196,9 @@ async function run() {
       res.send({ role: user?.role || "user" });
     });
 
-    // parcel API
+    // ------------------------------------------------
+    // Parcel API
+    // ------------------------------------------------
     app.get("/parcels", async (req, res) => {
       const query = {};
       const { email, deliveryStatus } = req.query;
@@ -254,6 +253,19 @@ async function run() {
       const result = await parcelCollection.deleteOne(query);
       res.send(result);
     });
+ app.get("/parcels/rider",async(req,res)=>{
+      const {riderEmail, deliveryStatus} = req.query;
+      const query={};
+      if(riderEmail){
+        query.riderEmail = riderEmail;
+      }
+      if(deliveryStatus){
+        query.deliveryStatus = {$in:["driver_assigned","rider_arriving"]}
+      }
+      const cursor = parcelCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    })
 
     app.get("/parcels/:id", async (req, res) => {
       const id = req.params.id;
@@ -261,8 +273,22 @@ async function run() {
       const result = await parcelCollection.findOne(query);
       res.send(result);
     });
+   
+    app.patch("/parcels/:id/status", async (req, res) => {
+      const {deliveryStatus}=req.body
+      const query= {_id: new ObjectId(req.params.id)};
+      const updateDoc={
+        $set: {
+          deliveryStatus:deliveryStatus,
+        },
+      }
+      const result = await parcelCollection.updateOne(query, updateDoc);
+      res.send(result);
+    })
 
+    // ------------------------------------------------
     // payment API
+    // ------------------------------------------------
     app.post("/payment-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
       const amount = parseInt(paymentInfo.cost) * 100;
