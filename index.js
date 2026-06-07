@@ -42,6 +42,7 @@ async function run() {
     const paymentCollection = db.collection("payments");
     const userCollection = db.collection("users");
     const ridersCollection = db.collection("riders");
+    const trackingCollection = db.collection("trackings");
 
     // Verify Token Function
     const verifyToken = async (req, res, next) => {
@@ -126,6 +127,18 @@ async function run() {
       }
       res.send(result);
     });
+
+    // TRcking parcel
+    const logTracking = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        createdAt: new Date(),
+        details: status.split("-").join(" "),
+      };
+      const result = await trackingCollection.insertOne(log);
+      return result;
+    };
 
     // ------------------------------------------------
     //User Related API
@@ -222,7 +235,7 @@ async function run() {
     });
     app.patch("/parcels/:id", async (req, res) => {
       const id = req.params.id;
-      const { parceId, riderId, riderName, riderEmail } = req.body;
+      const { parceId, riderId, riderName, riderEmail, trackingId } = req.body;
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: {
@@ -245,6 +258,9 @@ async function run() {
         riderQuery,
         riderUpdateDoc,
       );
+      // log tracking
+      logTracking(trackingId, "driver_assigned");
+
       res.send(riderResult);
     });
     app.delete("/parcels/:id", async (req, res) => {
@@ -253,19 +269,22 @@ async function run() {
       const result = await parcelCollection.deleteOne(query);
       res.send(result);
     });
- app.get("/parcels/rider",async(req,res)=>{
-      const {riderEmail, deliveryStatus} = req.query;
-      const query={};
-      if(riderEmail){
+    app.get("/parcels/rider", async (req, res) => {
+      const { riderEmail, deliveryStatus } = req.query;
+      const query = {};
+      if (riderEmail) {
         query.riderEmail = riderEmail;
       }
-      if(deliveryStatus){
-        query.deliveryStatus = {$in:["driver_assigned","rider_arriving"]}
+      if (deliveryStatus !== "parcel_delivered") {
+        // query.deliveryStatus = {$in:["driver_assigned","rider_arriving"]}
+        query.deliveryStatus = { $nin: ["parcel_delivered"] };
+      } else {
+        query.deliveryStatus === deliveryStatus;
       }
       const cursor = parcelCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
-    })
+    });
 
     app.get("/parcels/:id", async (req, res) => {
       const id = req.params.id;
@@ -273,18 +292,33 @@ async function run() {
       const result = await parcelCollection.findOne(query);
       res.send(result);
     });
-   
+
     app.patch("/parcels/:id/status", async (req, res) => {
-      const {deliveryStatus}=req.body
-      const query= {_id: new ObjectId(req.params.id)};
-      const updateDoc={
+      const { deliveryStatus, riderId,trackingId } = req.body;
+      const query = { _id: new ObjectId(req.params.id) };
+      const updateDoc = {
         $set: {
-          deliveryStatus:deliveryStatus,
+          deliveryStatus: deliveryStatus,
         },
+      };
+      if (deliveryStatus === "parcel_delivered") {
+        //  Update Rider Information
+        const riderQuery = { _id: new ObjectId(riderId) };
+        const riderUpdateDoc = {
+          $set: {
+            workStatus: "available",
+          },
+        };
+        const riderResult = await ridersCollection.updateOne(
+          riderQuery,
+          riderUpdateDoc,
+        );
       }
       const result = await parcelCollection.updateOne(query, updateDoc);
+      // log tracking
+      logTracking(trackingId,deliveryStatus)
       res.send(result);
-    })
+    });
 
     // ------------------------------------------------
     // payment API
@@ -361,6 +395,7 @@ async function run() {
 
         if (session.payment_status === "paid") {
           const resultPayment = await paymentCollection.insertOne(payment);
+          logTracking(trackingId, "pending-pickup");
           res.send({
             success: true,
             modifyParcel: result,
