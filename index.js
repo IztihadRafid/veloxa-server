@@ -110,6 +110,13 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+
+    app.delete("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await ridersCollection.deleteOne(query);
+      res.send(result);
+    })
     app.get("/riders/delivery-per-day", async (req, res) => {
       const email = req.query.email;
 
