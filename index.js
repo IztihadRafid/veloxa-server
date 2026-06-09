@@ -71,7 +71,16 @@ async function run() {
       }
       next();
     };
-
+    // Verify Rider before allwoing Rider activity
+    const verifyRider = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden Access" });
+      }
+      next();
+    };
     // ------------------------------------------------
     // Rider Related API
     // ------------------------------------------------
@@ -99,6 +108,56 @@ async function run() {
       }
       const cursor = ridersCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.get("/riders/delivery-per-day", async (req, res) => {
+      const email = req.query.email;
+
+      if (!email) {
+        return res.status(400).send({ error: "email is required" });
+      }
+      const pipeline = [
+        {
+          $match: {
+            riderEmail: email,
+            deliveryStatus: "parcel_delivered",
+          },
+        },
+        {
+          $lookup: {
+            from: "trackings",
+            localField: "trackingId",
+            foreignField: "trackingId",
+            as: "parcel_trackings",
+          },
+        },
+
+        {
+          $unwind: "$parcel_trackings",
+        },
+        {
+          $match: {
+            "parcel_trackings.status": "parcel_delivered",
+          },
+        },
+        {
+          $addFields: {
+            deliveryDay: {
+              $dateToString: {
+                format: "%d-%m-%Y",
+                date: "$parcel_trackings.createdAt",
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: "$deliveryDay",
+            deliveryCount: { $sum: 1 },
+          },
+        },
+      ];
+      const result = await parcelCollection.aggregate(pipeline).toArray();
       res.send(result);
     });
     app.patch("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
@@ -130,7 +189,7 @@ async function run() {
 
     // TRcking parcel
     const logTracking = async (trackingId, status) => {
-       console.log("logTracking called:", trackingId, status)
+      console.log("logTracking called:", trackingId, status);
       const log = {
         trackingId,
         status,
@@ -188,7 +247,11 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-
+    app.get("/users/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await userCollection.findOne({ email });
+      res.send(result);
+    });
     // update role to make admin
     app.patch("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
@@ -296,9 +359,27 @@ async function run() {
       const result = await parcelCollection.findOne(query);
       res.send(result);
     });
-
+    app.get("/parcels/delivery-status/stats", verifyToken, async (req, res) => {
+      const pipeline = [
+        {
+          $group: {
+            _id: "$deliveryStatus",
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            status: "$_id",
+            count: 1,
+            _id: 1,
+          },
+        },
+      ];
+      const result = await parcelCollection.aggregate(pipeline).toArray();
+      res.send(result);
+    });
     app.patch("/parcels/:id/status", async (req, res) => {
-      const { deliveryStatus, riderId,trackingId } = req.body;
+      const { deliveryStatus, riderId, trackingId } = req.body;
       const query = { _id: new ObjectId(req.params.id) };
       const updateDoc = {
         $set: {
@@ -320,7 +401,7 @@ async function run() {
       }
       const result = await parcelCollection.updateOne(query, updateDoc);
       // log tracking
-      await logTracking(trackingId,deliveryStatus)
+      await logTracking(trackingId, deliveryStatus);
       res.send(result);
     });
 
@@ -430,15 +511,15 @@ async function run() {
       res.send(result);
     });
 
-    // Tracking Related API 
+    // Tracking Related API
     app.get("/trackings/:trackingId/logs", async (req, res) => {
       const trackingId = req.params.trackingId;
-      
+
       const query = { trackingId };
-      
+
       const result = await trackingCollection.find(query).toArray();
       res.send(result);
-    })
+    });
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
