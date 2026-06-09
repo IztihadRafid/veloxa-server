@@ -10,9 +10,10 @@ const admin = require("firebase-admin");
 // const serviceAccount = require("./zapshift-firebase-admin.json");
 
 // const serviceAccount = require("./firebase-admin-key.json");
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8",
+);
 const serviceAccount = JSON.parse(decoded);
-
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -121,7 +122,7 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await ridersCollection.deleteOne(query);
       res.send(result);
-    })
+    });
     app.get("/riders/delivery-per-day", async (req, res) => {
       const email = req.query.email;
 
@@ -277,15 +278,20 @@ async function run() {
       const result = await userCollection.updateOne(query, updateDoc);
       res.send(result);
     });
-
+    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await userCollection.deleteOne(query);
+      res.send(result);
+    });
     app.get("/users/:email/role", async (req, res) => {
       const email = req.params.email;
       const query = { email };
       const user = await userCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
-    
-    app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
+
+    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await userCollection.deleteOne(query);
