@@ -7,7 +7,12 @@ const port = process.env.PORT || 8082;
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const crypto = require("crypto");
 const admin = require("firebase-admin");
-const serviceAccount = require("./zapshift-firebase-admin.json");
+// const serviceAccount = require("./zapshift-firebase-admin.json");
+
+// const serviceAccount = require("./firebase-admin-key.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -279,7 +284,13 @@ async function run() {
       const user = await userCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
-
+    
+    app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await userCollection.deleteOne(query);
+      res.send(result);
+    });
     // ------------------------------------------------
     // Parcel API
     // ------------------------------------------------
@@ -527,10 +538,10 @@ async function run() {
       const result = await trackingCollection.find(query).toArray();
       res.send(result);
     });
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!",
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!",
+    // );
   } finally {
     // await client.close();
   }
