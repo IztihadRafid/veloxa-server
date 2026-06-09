@@ -554,7 +554,7 @@ async function run() {
 }
 run().catch(console.dir);
 app.get("/", (req, res) => {
-  res.send("Zap Shift Server is Running!");
+  res.send("Veloxa Server is Running!");
 });
 
 app.listen(port, () => {
