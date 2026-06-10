@@ -29,7 +29,13 @@ function generateTrackingId() {
 
 // middleware
 app.use(express.json());
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "https://zapshift-a89f5.web.app"],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  }),
+);
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.1rbhjut.mongodb.net/?appName=Cluster0`;
 
@@ -116,13 +122,6 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-
-    app.delete("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await ridersCollection.deleteOne(query);
-      res.send(result);
-    });
     app.get("/riders/delivery-per-day", async (req, res) => {
       const email = req.query.email;
 
@@ -173,6 +172,13 @@ async function run() {
       const result = await parcelCollection.aggregate(pipeline).toArray();
       res.send(result);
     });
+    app.delete("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await ridersCollection.deleteOne(query);
+      res.send(result);
+    });
+
     app.patch("/riders/:id", verifyToken, verifyAdmin, async (req, res) => {
       const status = req.body.status;
       const id = req.params.id;
@@ -291,12 +297,6 @@ async function run() {
       res.send({ role: user?.role || "user" });
     });
 
-    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await userCollection.deleteOne(query);
-      res.send(result);
-    });
     // ------------------------------------------------
     // Parcel API
     // ------------------------------------------------
@@ -322,6 +322,47 @@ async function run() {
       parcel.trackingId = trackingId;
       await logTracking(trackingId, "parcel_created");
       const result = await parcelCollection.insertOne(parcel);
+      res.send(result);
+    });
+    app.get("/parcels/rider", async (req, res) => {
+      const { riderEmail, deliveryStatus } = req.query;
+      const query = {};
+      if (riderEmail) {
+        query.riderEmail = riderEmail;
+      }
+      if (deliveryStatus !== "parcel_delivered") {
+        // query.deliveryStatus = {$in:["driver_assigned","rider_arriving"]}
+        query.deliveryStatus = { $nin: ["parcel_delivered"] };
+      } else {
+        query.deliveryStatus === deliveryStatus;
+      }
+      const cursor = parcelCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.get("/parcels/delivery-status/stats", verifyToken, async (req, res) => {
+      const pipeline = [
+        {
+          $group: {
+            _id: "$deliveryStatus",
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            status: "$_id",
+            count: 1,
+            _id: 1,
+          },
+        },
+      ];
+      const result = await parcelCollection.aggregate(pipeline).toArray();
+      res.send(result);
+    });
+    app.get("/parcels/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await parcelCollection.findOne(query);
       res.send(result);
     });
     app.patch("/parcels/:id", async (req, res) => {
@@ -354,54 +395,6 @@ async function run() {
 
       res.send(riderResult);
     });
-    app.delete("/parcels/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await parcelCollection.deleteOne(query);
-      res.send(result);
-    });
-    app.get("/parcels/rider", async (req, res) => {
-      const { riderEmail, deliveryStatus } = req.query;
-      const query = {};
-      if (riderEmail) {
-        query.riderEmail = riderEmail;
-      }
-      if (deliveryStatus !== "parcel_delivered") {
-        // query.deliveryStatus = {$in:["driver_assigned","rider_arriving"]}
-        query.deliveryStatus = { $nin: ["parcel_delivered"] };
-      } else {
-        query.deliveryStatus === deliveryStatus;
-      }
-      const cursor = parcelCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-
-    app.get("/parcels/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await parcelCollection.findOne(query);
-      res.send(result);
-    });
-    app.get("/parcels/delivery-status/stats", verifyToken, async (req, res) => {
-      const pipeline = [
-        {
-          $group: {
-            _id: "$deliveryStatus",
-            count: { $sum: 1 },
-          },
-        },
-        {
-          $project: {
-            status: "$_id",
-            count: 1,
-            _id: 1,
-          },
-        },
-      ];
-      const result = await parcelCollection.aggregate(pipeline).toArray();
-      res.send(result);
-    });
     app.patch("/parcels/:id/status", async (req, res) => {
       const { deliveryStatus, riderId, trackingId } = req.body;
       const query = { _id: new ObjectId(req.params.id) };
@@ -426,6 +419,12 @@ async function run() {
       const result = await parcelCollection.updateOne(query, updateDoc);
       // log tracking
       await logTracking(trackingId, deliveryStatus);
+      res.send(result);
+    });
+    app.delete("/parcels/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await parcelCollection.deleteOne(query);
       res.send(result);
     });
 
@@ -544,10 +543,10 @@ async function run() {
       const result = await trackingCollection.find(query).toArray();
       res.send(result);
     });
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!",
-    // );
+    await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!",
+    );
   } finally {
     // await client.close();
   }
